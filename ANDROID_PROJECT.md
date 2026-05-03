@@ -125,3 +125,22 @@ class AppDetectionService : AccessibilityService() {
     }
 }
 ```
+
+## 6. WebView Permission Fix (Mandatory for Apps)
+Agar aap app mein convert kar rahe hain, toh sirf Manifest se kaam nahi chalega. `WebChromeClient` mein ye code dalna zaroori hai taaki WebView camera access de sake:
+
+```kotlin
+// In your MainActivity.kt where WebView is initialized
+webView.webChromeClient = object : WebChromeClient() {
+    override fun onPermissionRequest(request: PermissionRequest) {
+        // Bina iske WebView camera permission block kar dega
+        request.grant(request.resources)
+    }
+}
+
+// Ensure hardware acceleration is ON for AI performance
+webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+
+// Allow Media Playback without interaction (Auto-start camera)
+webView.settings.mediaPlaybackRequiresUserGesture = false
+```

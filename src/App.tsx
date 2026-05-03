@@ -37,6 +37,7 @@ export default function App() {
   const [history, setHistory] = useState<DetectionLog[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const lastAlertTime = useRef(0);
@@ -143,18 +144,38 @@ export default function App() {
   }, [isActive, sensitivity, triggerAlert, isRegistered]);
 
   const toggleGuard = async () => {
+    setCameraError(null);
     if (!isActive) {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ 
-          video: { facingMode: 'user' } 
+          video: { 
+            facingMode: 'user',
+            width: { ideal: 640 },
+            height: { ideal: 480 }
+          } 
         });
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
-          await peekGuard.init();
-          setIsActive(true);
+          // Ensure video plays before starting AI
+          videoRef.current.onloadedmetadata = async () => {
+            try {
+              await videoRef.current?.play();
+              await peekGuard.init();
+              setIsActive(true);
+            } catch (e) {
+              setCameraError("Autoplay blocked. Tap to start video.");
+            }
+          };
         }
-      } catch (err) {
+      } catch (err: any) {
         console.error('Camera access denied:', err);
+        if (err.name === 'NotAllowedError') {
+          setCameraError("Camera permission denied. Please allow camera access in settings.");
+        } else if (err.name === 'NotFoundError') {
+          setCameraError("No front camera detected on this device.");
+        } else {
+          setCameraError("Camera initialization failed. Check if another app is using it.");
+        }
       }
     } else {
       const stream = videoRef.current?.srcObject as MediaStream;
@@ -504,12 +525,36 @@ export default function App() {
               />
               
               {!isActive && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-6">
-                  <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center mb-4">
-                    <EyeOff size={32} className="text-gray-600" />
-                  </div>
-                  <h4 className="text-sm font-bold uppercase tracking-widest text-gray-500">Camera Feed Scrambled</h4>
-                  <p className="text-[10px] text-gray-600 mt-2 max-w-[200px] font-mono leading-relaxed">SYSTEM IS CURRENTLY IN PASSIVE MODE. ACTIVATE TO SEE AI OVERLAY.</p>
+                <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-6 bg-black/60 backdrop-blur-sm">
+                  {cameraError ? (
+                    <motion.div 
+                      initial={{ scale: 0.9 }}
+                      animate={{ scale: 1 }}
+                      className="flex flex-col items-center"
+                    >
+                      <div className="w-16 h-16 rounded-full bg-red-500/20 flex items-center justify-center mb-4">
+                        <AlertTriangle size={32} className="text-red-500" />
+                      </div>
+                      <h4 className="text-sm font-bold uppercase tracking-widest text-red-500">Hardware Access Error</h4>
+                      <p className="text-[10px] text-gray-300 mt-2 max-w-[250px] font-mono leading-relaxed bg-red-500/10 p-3 rounded-lg border border-red-500/20">
+                        {cameraError}
+                      </p>
+                      <button 
+                        onClick={toggleGuard}
+                        className="mt-6 px-6 py-2 bg-white text-black text-[10px] font-bold rounded-full uppercase tracking-tighter hover:bg-gray-200 transition-colors"
+                      >
+                        Try Again
+                      </button>
+                    </motion.div>
+                  ) : (
+                    <>
+                      <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center mb-4">
+                        <EyeOff size={32} className="text-gray-600" />
+                      </div>
+                      <h4 className="text-sm font-bold uppercase tracking-widest text-gray-500">Camera Feed Scrambled</h4>
+                      <p className="text-[10px] text-gray-600 mt-2 max-w-[200px] font-mono leading-relaxed">SYSTEM IS CURRENTLY IN PASSIVE MODE. ACTIVATE TO SEE AI OVERLAY.</p>
+                    </>
+                  )}
                 </div>
               )}
 
