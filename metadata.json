@@ -1,0 +1,11 @@
+{
+  "name": "Peek Guard AI",
+  "description": "Smart AI-powered privacy screen that detects unauthorized viewers using face recognition and background monitoring.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "AI Face Detection",
+    "Privacy Protection"
+  ]
+}
