@@ -46,27 +46,28 @@ com.peekguard.ai
 
 ## 3. Core Detection Logic (Kotlin)
 ```kotlin
-// analyzer/FaceAnalyzer.kt
-class FaceAnalyzer(private val onFacesDetected: (Int) -> Unit) : ImageAnalysis.Analyzer {
-    private val options = FaceDetectorOptions.Builder()
-        .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
-        .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_NONE)
-        .build()
-    private val detector = FaceDetection.getClient(options)
-
-    @UnstableApi
-    override function analyze(imageProxy: ImageProxy) {
-        val mediaImage = imageProxy.image ?: return
-        val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
+// In DetectionService.kt, run Camera in background without preview
+fun startGhostMonitoring() {
+    val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
+    cameraProviderFuture.addListener({
+        val preview = Preview.Builder().build() // We build but DON'T attach to a SurfaceView
+        val imageAnalysis = ImageAnalysis.Builder()
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .build()
+            
+        imageAnalysis.setAnalyzer(executor, FaceAnalyzer { count ->
+            if (count > threshold) {
+                // Trigger Overlay & Audio
+                showPrivacyOverlay()
+                playWarningVoice()
+            } else {
+                hidePrivacyOverlay() // AUTO-RESUME
+            }
+        })
         
-        detector.process(image)
-            .addOnSuccessListener { faces ->
-                onFacesDetected(faces.size)
-            }
-            .addOnCompleteListener {
-                imageProxy.close()
-            }
-    }
+        // Use a dummy LifecycleOwner if needed for background persistence
+        cameraProvider.bindToLifecycle(lifecycleOwner, cameraSelector, imageAnalysis)
+    }, ContextCompat.getMainExecutor(context))
 }
 ```
 
@@ -126,21 +127,29 @@ class AppDetectionService : AccessibilityService() {
 }
 ```
 
-## 6. WebView Permission Fix (Mandatory for Apps)
-Agar aap app mein convert kar rahe hain, toh sirf Manifest se kaam nahi chalega. `WebChromeClient` mein ye code dalna zaroori hai taaki WebView camera access de sake:
+## 7. Hidden Sensor Logic (No Camera Preview)
+User ko camera nahi dikhna chahiye, sirf detection honi chahiye. Iske liye `Preview` use na karein, sirf `ImageAnalysis` use karein:
 
 ```kotlin
-// In your MainActivity.kt where WebView is initialized
-webView.webChromeClient = object : WebChromeClient() {
-    override fun onPermissionRequest(request: PermissionRequest) {
-        // Bina iske WebView camera permission block kar dega
-        request.grant(request.resources)
-    }
+// In DetectionService.kt
+private fun setupInvisibleSensor() {
+    val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
+    cameraProviderFuture.addListener({
+        val cameraProvider = cameraProviderFuture.get()
+        
+        // Analysis only - NO surface/preview attached
+        val imageAnalysis = ImageAnalysis.Builder()
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .build()
+            
+        imageAnalysis.setAnalyzer(executor) { image ->
+            // AI Detection logic here
+            processImageForDistance(image)
+            image.close()
+        }
+
+        // Bind without a preview use case
+        cameraProvider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_FRONT_CAMERA, imageAnalysis)
+    }, ContextCompat.getMainExecutor(this))
 }
-
-// Ensure hardware acceleration is ON for AI performance
-webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
-
-// Allow Media Playback without interaction (Auto-start camera)
-webView.settings.mediaPlaybackRequiresUserGesture = false
 ```

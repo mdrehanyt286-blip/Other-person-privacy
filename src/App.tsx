@@ -32,16 +32,17 @@ interface DetectionLog {
 export default function App() {
   const [isActive, setIsActive] = useState(false);
   const [isAlertActive, setIsAlertActive] = useState(false);
+  const [isShutdown, setIsShutdown] = useState(false);
+  const [proximityScore, setProximityScore] = useState(0);
   const [facesDetected, setFacesDetected] = useState(0);
   const [sensitivity, setSensitivity] = useState<Sensitivity>('Medium');
   const [history, setHistory] = useState<DetectionLog[]>([]);
   const [showHistory, setShowHistory] = useState(false);
-  const [isMinimized, setIsMinimized] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const lastAlertTime = useRef(0);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const shutdownTimeout = useRef<number | null>(null);
 
   const triggerAlert = useCallback(() => {
     const now = Date.now();
@@ -50,49 +51,36 @@ export default function App() {
     lastAlertTime.current = now;
     setIsAlertActive(true);
     
-    // Voice Alert
-    const msg = new SpeechSynthesisUtterance("Warning! Someone is watching your screen.");
+    // 1. Voice Alert
+    const msg = new SpeechSynthesisUtterance("Privacy Zone Breeched.");
     window.speechSynthesis.speak(msg);
 
-    // Vibration (simulation)
-    if ('vibrate' in navigator) {
-      navigator.vibrate([200, 100, 200]);
-    }
+    // 2. Vibration
+    if ('vibrate' in navigator) navigator.vibrate([200]);
 
-    setHistory(prev => [{
-      id: Math.random().toString(36).substr(2, 9),
-      timestamp: new Date().toLocaleTimeString(),
-      faceCount: facesDetected,
-      status: 'ALERT'
-    }, ...prev].slice(0, 50));
-
-    // Reset alert after 4 seconds
-    setTimeout(() => setIsAlertActive(false), 4000);
+    setIsAlertActive(true);
   }, [facesDetected]);
 
   const [isRegistered, setIsRegistered] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [isUniversalMode, setIsUniversalMode] = useState(true);
-  const [trustFaceDescriptor, setTrustFaceDescriptor] = useState<any>(null);
 
   const registerIdentity = async () => {
     if (!videoRef.current || !isActive) return;
     setIsScanning(true);
     
-    // Simulating face ID capture with current detector
-    // For a real production app, we would store vector embeddings here
     const faces = await peekGuard.detect(videoRef.current);
     if (faces.length === 1) {
       setTimeout(() => {
         setIsRegistered(true);
         setIsScanning(false);
-        // In a full implementation, we'd save the face geometry metadata
-        const msg = new SpeechSynthesisUtterance("Identity Registered. Welcome Rehan Bhai.");
+        const msg = new SpeechSynthesisUtterance("Master Identity Confirmed.");
         window.speechSynthesis.speak(msg);
       }, 1500);
     } else {
       setIsScanning(false);
-      alert("Please ensure only your face is visible during registration.");
+      const msg = new SpeechSynthesisUtterance("Registration failed.");
+      window.speechSynthesis.speak(msg);
     }
   };
 
@@ -105,32 +93,38 @@ export default function App() {
       const faces = await peekGuard.detect(videoRef.current);
       setFacesDetected(faces.length);
 
-      // Smart Logic:
-      // If 1 face detected but NOT registered -> Trigger (Someone else using)
-      // If 2+ faces detected -> Trigger (Someone is peeking)
-      
-      const threshold = sensitivity === 'Low' ? 3 : sensitivity === 'Medium' ? 2 : 1;
+      let maxArea = 0;
+      if (faces.length > 0 && videoRef.current) {
+        const videoArea = videoRef.current.videoWidth * videoRef.current.videoHeight;
+        faces.forEach(face => {
+          const faceArea = face.box.width * face.box.height;
+          const ratio = (faceArea / videoArea) * 100;
+          if (ratio > maxArea) maxArea = ratio;
+        });
+      }
+      setProximityScore(Math.min(100, Math.round(maxArea * 5)));
+
+      const distanceThreshold = sensitivity === 'Low' ? 40 : sensitivity === 'Medium' ? 25 : 15;
       
       let shouldAlert = false;
-
       if (isRegistered) {
-        // If owner is registered, alert if more than 1 face OR if the only face is significantly different
-        // (Simplified for this version to count-based with Trust zone)
-        if (faces.length > 1) {
-          shouldAlert = true;
-        }
+        if (faces.length > 1) shouldAlert = true;
       } else {
-        // If not registered, use basic threshold logic
-        if (faces.length >= threshold && threshold > 0) {
-          // Default to allowing at least 1 face if sensitivity is not 'High'
-          if (sensitivity !== 'High' || faces.length > 1) {
-            shouldAlert = true;
-          }
-        }
+        if (maxArea > (distanceThreshold / 10)) shouldAlert = true;
       }
       
+      // AUTO ON/OFF LOGIC
       if (shouldAlert) {
-        triggerAlert();
+        if (!isAlertActive) {
+          triggerAlert();
+        }
+      } else {
+        if (isAlertActive) {
+          setIsAlertActive(false);
+          window.speechSynthesis.cancel(); // Turant voice band karo
+          const msg = new SpeechSynthesisUtterance("Safe zone restored.");
+          window.speechSynthesis.speak(msg);
+        }
       }
 
       animationFrame = requestAnimationFrame(runDetection);
@@ -141,7 +135,7 @@ export default function App() {
     }
 
     return () => cancelAnimationFrame(animationFrame);
-  }, [isActive, sensitivity, triggerAlert, isRegistered]);
+  }, [isActive, sensitivity, triggerAlert, isRegistered, isAlertActive]);
 
   const toggleGuard = async () => {
     setCameraError(null);
@@ -208,6 +202,32 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#050505] text-white font-sans selection:bg-red-500/30 overflow-hidden">
+      {/* Black Out Overlay Triggered by Sensor */}
+      <AnimatePresence>
+        {isAlertActive && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[200] bg-black flex flex-col items-center justify-center pointer-events-none"
+          >
+            <motion.div
+              animate={{ scale: [1, 1.2, 1], opacity: [0.5, 1, 0.5] }}
+              transition={{ repeat: Infinity, duration: 1 }}
+              className="text-red-600 mb-8"
+            >
+              <AlertTriangle size={160} strokeWidth={2.5} />
+            </motion.div>
+            <h1 className="text-4xl font-black tracking-widest uppercase text-red-600 text-center px-6">
+              SENSOR ALERT: PROXIMITY BREACH
+            </h1>
+            <p className="mt-4 text-gray-700 font-mono text-xs uppercase tracking-[0.2em] animate-pulse">
+              [ SCREEN PROTECTED UNTIL CLEAR ]
+            </p>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Settings Modal */}
       <AnimatePresence>
         {showSettings && (
@@ -215,7 +235,7 @@ export default function App() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[110] bg-black/90 backdrop-blur-xl flex items-center justify-center p-6"
+            className="fixed inset-0 z-[110] bg-black/95 backdrop-blur-3xl flex items-center justify-center p-6"
           >
             <motion.div 
               initial={{ scale: 0.9, y: 20 }}
@@ -279,7 +299,7 @@ export default function App() {
 
       {/* Black Out Overlay */}
       <AnimatePresence>
-        {(isAlertActive || (activeApp && isAlertActive)) && (
+        {(isAlertActive || (activeApp && isAlertActive)) && !isShutdown && (
           <motion.div 
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -287,14 +307,26 @@ export default function App() {
             className="fixed inset-0 z-[100] bg-black flex flex-col items-center justify-center pointer-events-none"
           >
             <motion.div
-              animate={{ scale: [1, 1.1, 1] }}
-              transition={{ repeat: Infinity, duration: 1.5 }}
-              className="text-red-500"
+              animate={{ scale: [1, 1.1, 1], rotate: [0, 5, -5, 0] }}
+              transition={{ repeat: Infinity, duration: 0.5 }}
+              className="text-red-600 mb-8"
             >
-              <Lock size={120} strokeWidth={1} />
+              <AlertTriangle size={120} strokeWidth={2} />
             </motion.div>
-            <h1 className="mt-8 text-4xl font-black tracking-tighter uppercase text-red-500">Privacy Shield Active</h1>
-            <p className="mt-2 text-gray-500 font-mono animate-pulse">UNAUTHORIZED VIEWER DETECTED IN {activeApp?.toUpperCase() || 'SYSTEM'}</p>
+            <h1 className="text-5xl font-black tracking-tighter uppercase text-red-600 text-center px-6">
+              PROXIMITY BREACH
+            </h1>
+            <div className="mt-4 flex flex-col items-center">
+              <p className="text-gray-500 font-mono text-sm animate-pulse">INITIATING EMERGENCY SHUTDOWN...</p>
+              <div className="mt-6 w-64 h-1 bg-white/10 rounded-full overflow-hidden">
+                <motion.div 
+                  initial={{ width: 0 }}
+                  animate={{ width: '100%' }}
+                  transition={{ duration: 3 }}
+                  className="h-full bg-red-600"
+                />
+              </div>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -495,9 +527,71 @@ export default function App() {
 
             <div className="bg-[#0D0D0D] border border-white/5 rounded-2xl p-6">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-xs font-mono text-gray-500 tracking-wider uppercase">Live Counter</h3>
-                <Users size={14} className="text-gray-500" />
+                <h3 className="text-xs font-mono text-gray-500 tracking-wider uppercase">Proximity Sensor</h3>
+                <Activity size={14} className={cn("transition-colors", proximityScore > 50 ? "text-red-500" : "text-green-500")} />
               </div>
+              <div className="space-y-4">
+                <div className="flex items-end gap-2">
+                  <span className={cn(
+                    "text-6xl font-black tabular-nums tracking-tighter leading-none transition-colors",
+                    proximityScore > 50 ? "text-red-500" : "text-white"
+                  )}>
+                    {proximityScore}%
+                  </span>
+                  <span className="text-[10px] text-gray-500 font-mono mb-2 uppercase">Density</span>
+                </div>
+                <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
+                  <motion.div 
+                    initial={{ width: 0 }}
+                    animate={{ width: `${proximityScore}%` }}
+                    className={cn(
+                      "h-full transition-colors duration-500",
+                      proximityScore > 50 ? "bg-red-500 shadow-[0_0_10px_rgba(239,44,44,0.5)]" : "bg-green-500"
+                    )}
+                  />
+                </div>
+                <p className="text-[9px] text-gray-600 font-mono uppercase">Estimated Range: {proximityScore > 50 ? "CRITICAL (<2m)" : proximityScore > 20 ? "ZONE 1 (2-5m)" : "CLEAR"}</p>
+              </div>
+            </div>
+
+            <div className="bg-[#0D0D0D] border border-white/5 rounded-2xl p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-xs font-mono text-gray-500 tracking-wider uppercase">Live People Radar</h3>
+                <div className="flex items-center gap-1">
+                  <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+                  <span className="text-[10px] font-mono text-red-500 uppercase">Scanning...</span>
+                </div>
+              </div>
+              
+              <div className="relative h-32 flex items-center justify-center border border-white/5 rounded-xl bg-black/40 overflow-hidden mb-4">
+                {/* Radar Lines */}
+                <div className="absolute inset-0 border border-white/5 rounded-full scale-50" />
+                <div className="absolute inset-0 border border-white/5 rounded-full scale-75" />
+                <motion.div 
+                  animate={{ rotate: 360 }}
+                  transition={{ repeat: Infinity, duration: 4, ease: "linear" }}
+                  className="absolute inset-0 bg-gradient-to-tr from-green-500/20 to-transparent rounded-full origin-center"
+                />
+                
+                {/* Person Indicators */}
+                {Array.from({ length: facesDetected }).map((_, i) => (
+                  <motion.div
+                    key={i}
+                    initial={{ opacity: 0, scale: 0 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="absolute w-3 h-3 bg-red-500 rounded-full shadow-[0_0_10px_rgba(239,44,44,0.8)]"
+                    style={{
+                      left: `${30 + Math.random() * 40}%`,
+                      top: `${30 + Math.random() * 40}%`
+                    }}
+                  />
+                ))}
+                
+                {isActive && (
+                  <User className="text-green-500 relative z-10" size={24} />
+                )}
+              </div>
+
               <div className="flex items-end gap-2">
                 <span className={cn(
                   "text-6xl font-black tabular-nums tracking-tighter leading-none transition-colors",
@@ -505,12 +599,15 @@ export default function App() {
                 )}>
                   {facesDetected}
                 </span>
-                <span className="text-xs text-gray-500 font-mono mb-2 uppercase">Faces In Range</span>
+                <div className="flex flex-col mb-1">
+                  <span className="text-[10px] text-gray-500 font-mono uppercase">People</span>
+                  <span className="text-[10px] text-gray-700 font-mono uppercase">Around You</span>
+                </div>
               </div>
             </div>
           </div>
 
-          {/* Right: Camera Preview & Logs */}
+          {/* Center: Invisible Sensor Area */}
           <div className="md:col-span-8 flex flex-col gap-6">
             <div className="relative aspect-video bg-[#0D0D0D] border border-white/5 rounded-2xl overflow-hidden group">
               <video 
@@ -518,57 +615,72 @@ export default function App() {
                 autoPlay 
                 muted 
                 playsInline
-                className={cn(
-                  "w-full h-full object-cover transform scale-x-[-1] transition-opacity duration-1000",
-                  isActive ? "opacity-40" : "opacity-0"
-                )}
+                className="absolute inset-0 w-full h-full object-cover opacity-0 pointer-events-none"
               />
               
-              {!isActive && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-6 bg-black/60 backdrop-blur-sm">
-                  {cameraError ? (
-                    <motion.div 
-                      initial={{ scale: 0.9 }}
-                      animate={{ scale: 1 }}
-                      className="flex flex-col items-center"
-                    >
-                      <div className="w-16 h-16 rounded-full bg-red-500/20 flex items-center justify-center mb-4">
-                        <AlertTriangle size={32} className="text-red-500" />
-                      </div>
-                      <h4 className="text-sm font-bold uppercase tracking-widest text-red-500">Hardware Access Error</h4>
-                      <p className="text-[10px] text-gray-300 mt-2 max-w-[250px] font-mono leading-relaxed bg-red-500/10 p-3 rounded-lg border border-red-500/20">
-                        {cameraError}
-                      </p>
-                      <button 
-                        onClick={toggleGuard}
-                        className="mt-6 px-6 py-2 bg-white text-black text-[10px] font-bold rounded-full uppercase tracking-tighter hover:bg-gray-200 transition-colors"
-                      >
-                        Try Again
-                      </button>
-                    </motion.div>
-                  ) : (
-                    <>
-                      <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center mb-4">
-                        <EyeOff size={32} className="text-gray-600" />
-                      </div>
-                      <h4 className="text-sm font-bold uppercase tracking-widest text-gray-500">Camera Feed Scrambled</h4>
-                      <p className="text-[10px] text-gray-600 mt-2 max-w-[200px] font-mono leading-relaxed">SYSTEM IS CURRENTLY IN PASSIVE MODE. ACTIVATE TO SEE AI OVERLAY.</p>
-                    </>
-                  )}
+              <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-6 bg-[radial-gradient(circle_at_center,rgba(220,38,38,0.05)_0%,transparent_70%)]">
+                <div className={cn(
+                  "w-32 h-32 rounded-full border-2 border-dashed flex items-center justify-center mb-6 transition-all duration-500",
+                  isActive ? "border-green-500/30 animate-[spin_10s_linear_infinite]" : "border-gray-800"
+                )}>
+                  <div className={cn(
+                    "w-24 h-24 rounded-full border flex items-center justify-center transition-all duration-300",
+                    isActive ? "border-green-500/50 bg-green-500/5" : "border-gray-800"
+                  )}>
+                    <Activity size={32} className={cn(
+                      "transition-colors",
+                      isActive ? "text-green-500" : "text-gray-800"
+                    )} />
+                  </div>
                 </div>
-              )}
+                
+                <h4 className={cn(
+                  "text-sm font-bold uppercase tracking-widest transition-colors",
+                  isActive ? "text-green-500" : "text-gray-600"
+                )}>
+                  {isActive ? 'GHOST SENSOR ACTIVE' : 'SENSOR OFFLINE'}
+                </h4>
+                <p className="text-[10px] text-gray-700 mt-2 max-w-[250px] font-mono leading-relaxed uppercase">
+                  {cameraError || (isActive ? 'Monitoring background proximity with AI face-vector mapping.' : 'Hardware in standby mode.')}
+                </p>
+
+                {isActive && (
+                  <div className="mt-8 flex gap-3">
+                    <div className="flex flex-col items-center">
+                      <div className="w-16 h-1 bg-white/5 rounded-full overflow-hidden">
+                        <motion.div 
+                          animate={{ x: [-64, 64] }}
+                          transition={{ repeat: Infinity, duration: 1.5, ease: "linear" }}
+                          className="w-full h-full bg-green-500/40"
+                        />
+                      </div>
+                      <span className="mt-2 text-[8px] font-mono text-gray-600">X-SCANNER</span>
+                    </div>
+                    <div className="flex flex-col items-center">
+                      <div className="w-16 h-1 bg-white/5 rounded-full overflow-hidden">
+                        <motion.div 
+                          animate={{ scaleX: [0.5, 1, 0.5] }}
+                          transition={{ repeat: Infinity, duration: 2 }}
+                          className="w-full h-full bg-blue-500/40"
+                        />
+                      </div>
+                      <span className="mt-2 text-[8px] font-mono text-gray-600">DENSITY-MAP</span>
+                    </div>
+                  </div>
+                )}
+              </div>
 
               {isActive && (
                 <>
                   <div className="absolute top-4 left-4 flex gap-2">
                     <div className="bg-black/50 backdrop-blur-md border border-white/10 px-3 py-1 rounded-full flex items-center gap-2">
-                      <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                      <span className="text-[10px] font-bold font-mono tracking-widest">LIVE FEED</span>
+                      <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                      <span className="text-[10px] font-bold font-mono tracking-widest text-green-500">REALTIME</span>
                     </div>
                   </div>
                   
                   {/* Decorative Scan lines */}
-                  <div className="absolute inset-0 pointer-events-none bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.25)_50%),linear-gradient(90deg,rgba(255,0,0,0.06),rgba(0,255,0,0.02),rgba(0,0,255,0.06))] bg-[length:100%_4px,3px_100%] opacity-20" />
+                  <div className="absolute inset-0 pointer-events-none bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.1)_50%),linear-gradient(90deg,rgba(0,255,0,0.02),rgba(0,255,0,0.01),rgba(0,255,0,0.02))] bg-[length:100%_4px,3px_100%] opacity-20" />
                 </>
               )}
             </div>

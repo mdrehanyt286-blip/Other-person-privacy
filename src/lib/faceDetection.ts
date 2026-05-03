@@ -12,7 +12,7 @@ export class PeekGuardCore {
     const model = faceDetection.SupportedModels.MediaPipeFaceDetector;
     const detectorConfig: faceDetection.MediaPipeFaceDetectorTfjsModelConfig = {
       runtime: 'tfjs',
-      maxFaces: 5,
+      maxFaces: 20,
     };
     this.detector = await faceDetection.createDetector(model, detectorConfig);
     this.isInitialized = true;
