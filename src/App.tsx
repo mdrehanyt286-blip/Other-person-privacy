@@ -14,7 +14,10 @@ import {
   Smartphone,
   Info,
   ChevronRight,
-  Activity
+  Activity,
+  ShieldCheck,
+  Scan,
+  Camera
 } from 'lucide-react';
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { peekGuard } from './lib/faceDetection';
@@ -39,6 +42,15 @@ export default function App() {
   const [history, setHistory] = useState<DetectionLog[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [isSecureContext, setIsSecureContext] = useState(true);
+
+  useEffect(() => {
+    // Android WebViews REQUIRE HTTPS or localhost to use camera
+    if (!window.isSecureContext && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+      setIsSecureContext(false);
+      setCameraError("SECURITY ERROR: App must run on HTTPS to use Camera/AI on Android.");
+    }
+  }, []);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const lastAlertTime = useRef(0);
@@ -527,6 +539,48 @@ export default function App() {
 
             <div className="bg-[#0D0D0D] border border-white/5 rounded-2xl p-6">
               <div className="flex items-center justify-between mb-4">
+                <h3 className="text-xs font-mono text-gray-500 tracking-wider uppercase">Master Identity</h3>
+                <ShieldCheck size={14} className={isRegistered ? "text-green-500" : "text-gray-600"} />
+              </div>
+              <div className="space-y-4">
+                <div className="flex flex-col">
+                  <span className={cn(
+                    "text-xl font-bold tracking-tight transition-colors",
+                    isRegistered ? "text-green-500" : "text-white"
+                  )}>
+                    {isRegistered ? "AUTHENTICATED" : "NOT REGISTERED"}
+                  </span>
+                  <span className="text-[10px] text-gray-600 font-mono uppercase mt-1">
+                    {isRegistered ? "Welcome back, Rehan Bhai" : "Face ID not stored in sensor cache"}
+                  </span>
+                </div>
+                {!isRegistered && isActive && (
+                  <button 
+                    onClick={registerIdentity}
+                    disabled={isScanning}
+                    className="w-full py-2 bg-white/5 hover:bg-white/10 text-white text-[10px] font-mono border border-white/10 rounded-lg transition-all flex items-center justify-center gap-2 group"
+                  >
+                    {isScanning ? (
+                      <div className="w-3 h-3 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                    ) : (
+                      <Scan size={14} className="group-hover:scale-110 transition-transform" />
+                    )}
+                    SCAN MASTER FACE
+                  </button>
+                )}
+                {isRegistered && (
+                  <button 
+                    onClick={() => setIsRegistered(false)}
+                    className="text-[8px] text-gray-700 hover:text-red-500 font-mono uppercase transition-colors"
+                  >
+                    [ Reset Identity Cache ]
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="bg-[#0D0D0D] border border-white/5 rounded-2xl p-6">
+              <div className="flex items-center justify-between mb-4">
                 <h3 className="text-xs font-mono text-gray-500 tracking-wider uppercase">Proximity Sensor</h3>
                 <Activity size={14} className={cn("transition-colors", proximityScore > 50 ? "text-red-500" : "text-green-500")} />
               </div>
@@ -636,13 +690,42 @@ export default function App() {
                 
                 <h4 className={cn(
                   "text-sm font-bold uppercase tracking-widest transition-colors",
-                  isActive ? "text-green-500" : "text-gray-600"
+                  cameraError ? "text-red-500" : (isActive ? 'text-green-500' : 'text-gray-600')
                 )}>
-                  {isActive ? 'GHOST SENSOR ACTIVE' : 'SENSOR OFFLINE'}
+                  {cameraError ? "HARDWARE ERROR" : (isActive ? 'GHOST SENSOR ACTIVE' : 'SENSOR OFFLINE')}
                 </h4>
-                <p className="text-[10px] text-gray-700 mt-2 max-w-[250px] font-mono leading-relaxed uppercase">
-                  {cameraError || (isActive ? 'Monitoring background proximity with AI face-vector mapping.' : 'Hardware in standby mode.')}
-                </p>
+                
+                {cameraError ? (
+                  <div className="mt-2 p-4 bg-red-500/10 border border-red-500/20 rounded-xl max-w-[320px] text-left">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Camera size={16} className="text-red-500" />
+                      <h5 className="text-[10px] font-bold text-red-500 uppercase tracking-widest">Action Required</h5>
+                    </div>
+                    <p className="text-[10px] text-gray-300 font-mono leading-relaxed uppercase">
+                      {cameraError}
+                    </p>
+                    
+                    <div className="mt-4 space-y-2">
+                      <p className="text-[9px] text-gray-500 font-mono uppercase font-bold border-b border-white/5 pb-1">Troubleshooting:</p>
+                      <ul className="text-[8px] text-gray-600 font-mono space-y-1">
+                        <li>• ENSURE YOU ARE USING HTTPS://</li>
+                        <li>• CHECK BROWSER SETTINGS &gt; CAMERA</li>
+                        <li>• IF IN APP: CHECK ANDROID_PROJECT.MD</li>
+                      </ul>
+                    </div>
+
+                    <button 
+                      onClick={() => window.location.reload()}
+                      className="mt-6 w-full py-2 bg-red-500 hover:bg-red-600 text-white text-[10px] font-bold rounded-lg uppercase transition-colors"
+                    >
+                      Re-Initialize System
+                    </button>
+                  </div>
+                ) : (
+                  <p className="text-[10px] text-gray-700 mt-2 max-w-[250px] font-mono leading-relaxed uppercase">
+                    {isActive ? 'Monitoring background proximity with AI face-vector mapping.' : 'Hardware in standby mode.'}
+                  </p>
+                )}
 
                 {isActive && (
                   <div className="mt-8 flex gap-3">

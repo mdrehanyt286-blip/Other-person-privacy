@@ -153,3 +153,37 @@ private fun setupInvisibleSensor() {
     }, ContextCompat.getMainExecutor(this))
 }
 ```
+
+## 6. WebView Permission Fix (Mandatory for Apps)
+Agar aap app mein convert kar rahe hain, toh sirf Manifest se kaam nahi chalega. `WebChromeClient` mein ye code dalna zaroori hai taaki WebView camera access de sake:
+
+```kotlin
+// In your MainActivity.kt where WebView is initialized
+webView.webChromeClient = object : WebChromeClient() {
+    override fun onPermissionRequest(request: PermissionRequest) {
+        // Bina iske WebView camera permission block kar dega
+        request.grant(request.resources)
+    }
+}
+
+// --- CRITICAL FIX FOR CAMERA IN APPS ---
+// Force WebView to treat your URL as a Secure Origin (Required for Camera/AI)
+// Without this, 'getUserMedia' will be undefined or always return "Permission Denied" on Android devices.
+// WebViews block media access on pure HTTP for security.
+webView.settings.apply {
+    javaScriptEnabled = true
+    databaseEnabled = true
+    domStorageEnabled = true
+    mediaPlaybackRequiresUserGesture = false
+}
+
+// Ensure hardware acceleration is ON for AI performance
+webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+```
+
+## 8. WebView Debugging (Logcat)
+Agar registration ya scanning fail ho rahi hai, toh Chrome DevTools se check karein:
+1. Android phone ko USB se laptop mein connect karein.
+2. Home screen par Developer Options > USB Debugging ON karein.
+3. Chrome browser mein `chrome://inspect/#devices` kholien.
+4. Console mein errors dekhein. Agar `Permissions denied` aa raha hai toh check karein ki HTTPS use kar rahe hain ya nahi.
